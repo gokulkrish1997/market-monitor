@@ -1,0 +1,32 @@
+# Starting universe. Tiers are a STARTING GUESS at volatility, not a quality
+# ranking and not advice. Run `python tools/validate_watchlist.py` — it measures
+# each symbol's real ATR% and turnover and tells you where it actually belongs.
+#
+# Rule of thumb once you have data:
+#   low    = ATR% under ~1.5
+#   medium = ATR% 1.5 - 2.5
+#   high   = ATR% above ~2.5
+
+equity:
+  low:
+    - HDFCBANK.NS
+    - RELIANCE.NS
+    - ITC.NS
+  medium:
+    - ICICIBANK.NS
+    - LT.NS
+    - SBIN.NS
+  high:
+    - TATASTEEL.NS
+    - HINDALCO.NS
+    - ADANIENT.NS
+    - BAJFINANCE.NS
+
+crypto:
+  low:
+    - BTC/USDT
+  medium:
+    - ETH/USDT
+  high:
+    - SOL/USDT
+    - XRP/USDT

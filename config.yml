@@ -1,0 +1,20 @@
+capital: 100000          # notional paper capital, INR
+risk_pct: 1.0            # % of capital risked per trade
+atr_period: 14
+atr_stop_mult: 2.0       # stop = entry - (mult x ATR)
+target_r: 2.0            # target = entry + (target_r x risk)
+timeout_bars: 20         # abandon the trade if neither level is hit
+interval: 15m
+lookback_bars: 120
+
+# Round-trip costs as % of notional. Deducted from every result.
+costs_pct:
+  equity: 0.12
+  crypto: 0.20
+
+market_hours_ist:
+  equity_open: "09:15"
+  equity_close: "15:30"
+
+rules:
+  - rsi_reversal
