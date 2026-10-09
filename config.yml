@@ -7,6 +7,17 @@ timeout_bars: 20         # abandon the trade if neither level is hit
 interval: 15m
 lookback_bars: 120
 
+# Tried in order; the first exchange that answers is used.
+# Binance is last because it returns HTTP 451 to US datacentre IPs,
+# which is where GitHub Actions runners live.
+crypto_exchanges:
+  - kraken
+  - coinbase
+  - bitstamp
+  - gemini
+  - binanceus
+  - binance
+
 # Round-trip costs as % of notional. Deducted from every result.
 costs_pct:
   equity: 0.12

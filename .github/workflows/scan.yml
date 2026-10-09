@@ -7,6 +7,11 @@ on:
     # Crypto runs round the clock, but hourly outside market hours to save minutes.
     - cron: "0 * * * *"
   workflow_dispatch:          # gives you a "Run workflow" button for testing
+    inputs:
+      selftest:
+        description: "Send a Telegram test message first"
+        type: boolean
+        default: false
 
 concurrency:
   group: market-scan          # never let two runs push the journal at once
@@ -28,6 +33,13 @@ jobs:
           cache: pip          # this is what keeps each run under a minute
 
       - run: pip install -r requirements.txt
+
+      - name: Selftest (manual runs only)
+        if: github.event_name == 'workflow_dispatch' && inputs.selftest
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scan.py --selftest
 
       - name: Scan
         env:

@@ -5,6 +5,10 @@ One scan. Fetch -> advance open paper trades -> look for new signals -> notify.
 Designed to be late-tolerant: it works from completed candle timestamps, not
 from "what happened in the last 15 minutes". A run that fires 25 minutes behind
 schedule produces exactly the same result, just later.
+
+Flags:
+  --force      ignore equity market hours (for local testing)
+  --selftest   send a Telegram test message and exit
 """
 import sys
 from datetime import datetime, timedelta, timezone
@@ -41,6 +45,22 @@ def equity_market_open(cfg):
     return o <= now.time() <= c
 
 
+def selftest():
+    """Prove the secrets reached the runner and Telegram accepts them."""
+    ok = notify.credentials_present()
+    print(f"TELEGRAM_TOKEN   : {'present' if ok['token'] else 'MISSING'}")
+    print(f"TELEGRAM_CHAT_ID : {'present' if ok['chat_id'] else 'MISSING'}")
+    if not (ok["token"] and ok["chat_id"]):
+        print("\nAdd them under Settings > Secrets and variables > Actions.")
+        return 1
+    sent = notify.send(
+        f"Selftest OK - {datetime.now(IST):%d %b %H:%M IST}\n"
+        f"Secrets are reaching the runner."
+    )
+    print("delivered" if sent else "Telegram REJECTED the message - check the values")
+    return 0 if sent else 1
+
+
 def main():
     cfg = load_yaml("config.yml")
     wl = load_yaml("watchlist.yml")
@@ -52,14 +72,30 @@ def main():
     klass = {s: "equity" for s, _ in equities}
     klass.update({s: "crypto" for s, _ in cryptos})
 
+    attempted = 0
     candles = {}
+
     if equity_market_open(cfg) or "--force" in sys.argv:
+        attempted += len(equities)
         candles.update(data.fetch_equity(
             [s for s, _ in equities], cfg["interval"], cfg["lookback_bars"]))
     else:
         print("Equity market closed - skipping NSE symbols.")
+
+    attempted += len(cryptos)
     candles.update(data.fetch_crypto(
-        [s for s, _ in cryptos], cfg["interval"], cfg["lookback_bars"]))
+        [s for s, _ in cryptos], cfg["interval"], cfg["lookback_bars"],
+        exchanges=cfg.get("crypto_exchanges")))
+
+    # A run that fetched nothing must NOT look like a successful run.
+    if attempted and not candles:
+        print(f"\nERROR: attempted {attempted} symbols, got data for none.")
+        print("The scan did nothing. Failing so this shows as a red run.")
+        notify.send(
+            "<b>Monitor broken</b>\nFetched 0 of "
+            f"{attempted} symbols this run. Check the Actions log."
+        )
+        return 1
 
     # 1. Advance anything already live BEFORE looking for new entries.
     closed = paper.update_positions(state, candles, cfg)
@@ -98,8 +134,8 @@ def main():
     paper.save_state(state)
 
     live = len(state["positions"])
-    print(f"Scanned {len(candles)} symbols | {signals} new | {live} live | "
-          f"{len(closed)} closed")
+    print(f"Scanned {len(candles)}/{attempted} symbols | {signals} new | "
+          f"{live} live | {len(closed)} closed")
 
     # Daily heartbeat so silence is never ambiguous.
     now = datetime.now(IST)
@@ -108,7 +144,10 @@ def main():
             f"Daily heartbeat {now:%d %b}: scanned {len(candles)} symbols, "
             f"{live} positions live."
         )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv:
+        sys.exit(selftest())
+    sys.exit(main())

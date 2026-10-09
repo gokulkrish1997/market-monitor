@@ -6,11 +6,16 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 
-def send(text: str):
+def credentials_present():
+    return {"token": bool(TOKEN), "chat_id": bool(CHAT_ID)}
+
+
+def send(text: str) -> bool:
+    """Returns True only if Telegram actually accepted the message."""
     print(text)
     if not TOKEN or not CHAT_ID:
         print("  (no Telegram credentials set - printed only)")
-        return
+        return False
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
@@ -19,8 +24,11 @@ def send(text: str):
         )
         if r.status_code != 200:
             print(f"  ! telegram error {r.status_code}: {r.text[:200]}")
+            return False
+        return True
     except Exception as e:
         print(f"  ! telegram send failed: {e}")
+        return False
 
 
 def format_signal(pos, atr_pct):
