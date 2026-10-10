@@ -7,6 +7,12 @@ timeout_bars: 20         # abandon the trade if neither level is hit
 interval: 15m
 lookback_bars: 120
 
+# GitHub drops scheduled runs, sometimes for hours. These control catch-up.
+catchup_bars: 30         # max candles to back-check after a missed run
+max_alert_age_bars: 4    # only ping Telegram for signals newer than this;
+                         # older ones are still logged to the journal
+heartbeat_after_ist: "15:30"   # daily "still alive" ping, first run after this
+
 # Tried in order; the first exchange that answers is used.
 # Binance is last because it returns HTTP 451 to US datacentre IPs,
 # which is where GitHub Actions runners live.

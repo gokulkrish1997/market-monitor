@@ -31,11 +31,12 @@ def send(text: str) -> bool:
         return False
 
 
-def format_signal(pos, atr_pct):
+def format_signal(pos, atr_pct, age_bars=0):
+    age = "" if age_bars == 0 else f"\n<i>({age_bars} bars ago - delayed run)</i>"
     return (
         f"<b>{pos['symbol']}</b>  [{pos['tier']}]\n"
         f"Rule: {pos['rule']}\n"
-        f"Signal candle: {pos['signal_time']}\n"
+        f"Signal candle: {pos['signal_time']}{age}\n"
         f"ATR: {pos['atr_at_signal']:.2f} ({atr_pct:.2f}% of price)\n"
         f"<i>Entry fills at next candle open. Levels follow in the next run.</i>"
     )

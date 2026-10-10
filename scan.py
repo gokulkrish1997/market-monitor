@@ -2,9 +2,11 @@
 """
 One scan. Fetch -> advance open paper trades -> look for new signals -> notify.
 
-Designed to be late-tolerant: it works from completed candle timestamps, not
-from "what happened in the last 15 minutes". A run that fires 25 minutes behind
-schedule produces exactly the same result, just later.
+Built for an unreliable scheduler. GitHub Actions regularly drops scheduled
+runs, sometimes for hours. So this does NOT ask "what happened in the last 15
+minutes" -- it asks "which completed candles have I not looked at yet" and
+works through all of them. A run that fires six hours late finds everything it
+missed; it just reports it later.
 
 Flags:
   --force      ignore equity market hours (for local testing)
@@ -20,6 +22,7 @@ from engine.indicators import atr
 from engine.rules import RULES
 
 IST = timezone(timedelta(hours=5, minutes=30))
+MIN_BARS = 60          # rules need this much history before they mean anything
 
 
 def load_yaml(path):
@@ -61,6 +64,94 @@ def selftest():
     return 0 if sent else 1
 
 
+def drain_closures(state, cfg):
+    """Advance live positions; announce only the ones we alerted on."""
+    closed = paper.update_positions(state, drain_closures.candles, cfg)
+    for pos in closed:
+        if pos.get("alerted", True):
+            notify.send(notify.format_close(pos))
+    for pos in state["positions"]:
+        if pos["status"] == "OPEN" and not pos.get("announced"):
+            if pos.get("alerted", True):
+                notify.send(notify.format_fill(pos))
+            pos["announced"] = True
+    return closed
+
+
+def scan_symbol(state, symbol, df, cfg, klass, tier_of):
+    """
+    Check every completed candle we have not evaluated yet, oldest first.
+    Returns (signals_found, signals_alerted).
+    """
+    stamps = [str(t) for t in df.index]
+    last_seen = state["last_eval"].get(symbol)
+
+    if last_seen is None:
+        start = len(stamps) - 1               # first sight: newest candle only
+    else:
+        start = next((i for i, t in enumerate(stamps) if t > last_seen), len(stamps))
+
+    # Never back-check further than catchup_bars, so a long outage or a fresh
+    # watchlist entry cannot produce a wall of historical alerts.
+    start = max(start, len(stamps) - cfg["catchup_bars"])
+
+    found = alerted = 0
+    for i in range(start, len(stamps)):
+        if i + 1 < MIN_BARS:
+            continue
+        window = df.iloc[: i + 1]
+        candle_ts = stamps[i]
+        age = len(stamps) - 1 - i             # how many bars ago this candle was
+        a = atr(window, cfg["atr_period"]).iloc[-1]
+
+        for rule_name in cfg["rules"]:
+            fn = RULES.get(rule_name)
+            if fn is None or not fn(window):
+                continue
+            if paper.already_signalled(state, symbol, rule_name, candle_ts):
+                continue
+            if paper.has_live_position(state, symbol, rule_name):
+                continue
+
+            fresh = age <= cfg["max_alert_age_bars"]
+            paper.mark_signalled(state, symbol, rule_name, candle_ts)
+            paper.open_pending(
+                state, symbol=symbol, asset_class=klass[symbol],
+                tier=tier_of[symbol], rule=rule_name,
+                candle_ts=candle_ts, atr_value=a, alerted=fresh,
+            )
+            found += 1
+            pos = state["positions"][-1]
+            if fresh:
+                notify.send(notify.format_signal(
+                    pos, 100 * a / window["close"].iloc[-1], age))
+                alerted += 1
+            else:
+                print(f"  logged (too old to alert): {symbol} {rule_name} "
+                      f"@ {candle_ts}, {age} bars ago")
+
+    state["last_eval"][symbol] = stamps[-1]
+    return found, alerted
+
+
+def maybe_heartbeat(state, cfg, scanned, live):
+    """
+    Fire once per day, on the FIRST run after the cutoff. The old version only
+    fired inside a 20-minute window, so a dropped run meant no heartbeat -- the
+    one message whose whole job is to prove the system is alive.
+    """
+    now = datetime.now(IST)
+    cutoff = datetime.strptime(cfg["heartbeat_after_ist"], "%H:%M").time()
+    today = now.strftime("%Y-%m-%d")
+    if now.time() < cutoff or state.get("last_heartbeat") == today:
+        return
+    state["last_heartbeat"] = today
+    notify.send(
+        f"Heartbeat {now:%d %b %H:%M IST}\n"
+        f"Scanned {scanned} symbols, {live} position(s) live. Monitor alive."
+    )
+
+
 def main():
     cfg = load_yaml("config.yml")
     wl = load_yaml("watchlist.yml")
@@ -97,53 +188,31 @@ def main():
         )
         return 1
 
+    drain_closures.candles = candles
+
     # 1. Advance anything already live BEFORE looking for new entries.
-    closed = paper.update_positions(state, candles, cfg)
-    for pos in closed:
-        notify.send(notify.format_close(pos))
-    for pos in state["positions"]:
-        if pos["status"] == "OPEN" and not pos.get("announced"):
-            notify.send(notify.format_fill(pos))
-            pos["announced"] = True
+    closed = drain_closures(state, cfg)
 
-    # 2. Look for new signals.
-    signals = 0
+    # 2. Work through every candle we have not evaluated yet.
+    found = alerted = 0
     for symbol, df in candles.items():
-        if df is None or len(df) < 60:
+        if df is None or len(df) < MIN_BARS:
             continue
-        candle_ts = str(df.index[-1])
-        a = atr(df, cfg["atr_period"]).iloc[-1]
-        for rule_name in cfg["rules"]:
-            fn = RULES.get(rule_name)
-            if fn is None or not fn(df):
-                continue
-            if paper.already_signalled(state, symbol, rule_name, candle_ts):
-                continue
-            if paper.has_live_position(state, symbol, rule_name):
-                continue
-            paper.mark_signalled(state, symbol, rule_name, candle_ts)
-            paper.open_pending(
-                state, symbol=symbol, asset_class=klass[symbol],
-                tier=tier_of[symbol], rule=rule_name,
-                candle_ts=candle_ts, atr_value=a,
-            )
-            pos = state["positions"][-1]
-            notify.send(notify.format_signal(pos, 100 * a / df["close"].iloc[-1]))
-            signals += 1
+        f, a = scan_symbol(state, symbol, df, cfg, klass, tier_of)
+        found += f
+        alerted += a
 
-    paper.save_state(state)
+    # 3. Backfilled signals may already have filled and closed. Settle them now
+    #    rather than leaving them hanging until the next run.
+    if found:
+        closed += drain_closures(state, cfg)
 
     live = len(state["positions"])
-    print(f"Scanned {len(candles)}/{attempted} symbols | {signals} new | "
-          f"{live} live | {len(closed)} closed")
+    print(f"Scanned {len(candles)}/{attempted} symbols | {found} new "
+          f"({alerted} alerted) | {live} live | {len(closed)} closed")
 
-    # Daily heartbeat so silence is never ambiguous.
-    now = datetime.now(IST)
-    if now.hour == 15 and 30 <= now.minute < 50:
-        notify.send(
-            f"Daily heartbeat {now:%d %b}: scanned {len(candles)} symbols, "
-            f"{live} positions live."
-        )
+    maybe_heartbeat(state, cfg, len(candles), live)
+    paper.save_state(state)
     return 0
 
 

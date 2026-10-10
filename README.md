@@ -43,9 +43,24 @@ The schedule starts itself the moment the workflow file is on `main`.
 Always from the repo root:
 
     pip install -r requirements.txt
-    python tools/validate_watchlist.py
-    python scan.py --force      # --force ignores market hours
-    python tools/analyse.py
+    python tools/validate_watchlist.py   # tickers alive? tiers right?
+    python tools/backtest.py             # how often does the rule fire?
+    python scan.py --force               # --force ignores market hours
+    python tools/analyse.py              # expectancy from the live journal
+
+## Tolerating a flaky scheduler
+
+GitHub deprioritises scheduled workflows and routinely drops runs, sometimes
+for hours. The scan is built for that:
+
+- It tracks the last candle it evaluated per symbol and works through every
+  candle it missed, rather than only looking at the newest one.
+- `catchup_bars` caps how far back it will look, so an outage cannot produce a
+  wall of alerts.
+- Signals older than `max_alert_age_bars` are written to the journal but do not
+  ping your phone -- the data stays complete, the notifications stay current.
+- The heartbeat fires on the first run after `heartbeat_after_ist`, once a day,
+  rather than needing a run inside a narrow window.
 
 ## Minutes budget
 

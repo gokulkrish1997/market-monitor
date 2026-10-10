@@ -99,3 +99,69 @@ def fetch_crypto(symbols, interval="15m", lookback_bars=120, exchanges=None):
 
     print("  ! every crypto exchange failed - no crypto data this run")
     return out
+
+
+# ---------------------------------------------------------------------------
+# History fetching, for tools/backtest.py only. Live scanning never uses this.
+# ---------------------------------------------------------------------------
+
+def history_equity(symbols, interval="15m", days=59):
+    """yfinance caps 15m data at 60 days, so 59 is the safe maximum."""
+    import yfinance as yf
+    out = {}
+    if not symbols:
+        return out
+    period = f"{days}d" if interval.endswith("m") else "2y"
+    raw = yf.download(symbols, period=period, interval=interval,
+                      group_by="ticker", auto_adjust=False,
+                      progress=False, threads=True)
+    for sym in symbols:
+        try:
+            df = raw[sym] if len(symbols) > 1 else raw
+            out[sym] = _clean(df).iloc[:-1]
+        except Exception as e:
+            print(f"  ! history failed for {sym}: {e}")
+    return out
+
+
+def history_crypto(symbols, interval="15m", days=59, exchanges=None):
+    """Exchanges cap each call at ~1000 bars, so page backwards with `since`."""
+    import ccxt
+    tf = CRYPTO_TF.get(interval, "15m")
+    ms = {"15m": 900_000, "1h": 3_600_000, "1d": 86_400_000}[tf]
+    need = (days * 86_400_000) // ms
+    exchanges = exchanges or ["kraken", "coinbase", "bitstamp", "binance"]
+
+    for name in exchanges:
+        try:
+            ex = getattr(ccxt, name)({"enableRateLimit": True, "timeout": 20000})
+            markets = ex.load_markets()
+        except Exception as e:
+            print(f"  - {name}: {type(e).__name__}")
+            continue
+
+        out = {}
+        for sym in symbols:
+            listed = _resolve(markets, sym)
+            if listed is None:
+                continue
+            rows, since = [], ex.milliseconds() - need * ms
+            while len(rows) < need:
+                batch = ex.fetch_ohlcv(listed, timeframe=tf, since=since, limit=1000)
+                if not batch:
+                    break
+                rows += batch
+                since = batch[-1][0] + ms
+                if len(batch) < 1000:
+                    break
+            if not rows:
+                continue
+            df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+            df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+            out[sym] = df.drop_duplicates("ts").set_index("ts").iloc[:-1]
+        if out:
+            print(f"  history source: {name} ({len(out)}/{len(symbols)} symbols)")
+            return out
+
+    print("  ! no exchange would serve history")
+    return {}

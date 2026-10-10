@@ -28,11 +28,17 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+DEFAULT_STATE = {"positions": [], "seen": {}, "last_eval": {}, "last_heartbeat": ""}
+
+
 def load_state():
     if not os.path.exists(STATE_PATH):
-        return {"positions": [], "seen": {}}
+        return dict(DEFAULT_STATE)
     with open(STATE_PATH) as f:
-        return json.load(f)
+        st = json.load(f)
+    for k, v in DEFAULT_STATE.items():      # tolerate older state files
+        st.setdefault(k, type(v)() if not isinstance(v, str) else v)
+    return st
 
 
 def save_state(state):
@@ -57,8 +63,10 @@ def has_live_position(state, symbol, rule):
     )
 
 
-def open_pending(state, *, symbol, asset_class, tier, rule, candle_ts, atr_value):
+def open_pending(state, *, symbol, asset_class, tier, rule, candle_ts, atr_value,
+                 alerted=True):
     state["positions"].append({
+        "alerted": alerted,
         "id": f"{symbol}-{rule}-{candle_ts}".replace(" ", "_"),
         "symbol": symbol,
         "asset_class": asset_class,
