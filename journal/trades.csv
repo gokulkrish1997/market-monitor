@@ -1,0 +1,2 @@
+id,asset_class,symbol,rule,tier,signal_time,fill_time,close_time,entry,stop,target,exit,exit_reason,qty,risk_amount,r_gross,costs_pct,r_net,bars_held
+BTC/USDT-rsi_reversal-2026-11-02_13:30:00+00:00,crypto,BTC/USDT,rsi_reversal,low,2026-11-02 13:30:00+00:00,2026-11-02 13:45:00+00:00,2026-11-02 14:15:00+00:00,78152.0,77808.078,78839.844,77808.078,STOP,2.907636,1000.0,-1.0,0.2,-1.454,3
